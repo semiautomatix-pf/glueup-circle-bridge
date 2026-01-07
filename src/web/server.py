@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 from ..config.config import load_config
 from ..clients.glueup import GlueUpClient
+from ..clients.glueup_auth import GlueUpAuth
 from ..clients.circle import CircleClient
 from ..core.state import StateCache
 from ..core.sync import sync_members
@@ -16,10 +17,17 @@ cfg = load_config()
 
 app = Flask(__name__)
 
+glueup_auth = GlueUpAuth(
+    base_url=cfg.glueup_base_url,
+    public_key=cfg.glueup_public_key,
+    private_key=cfg.glueup_private_key,
+    email=cfg.glueup_email,
+    passphrase=cfg.glueup_passphrase,
+)
+
 glue = GlueUpClient(
     base_url=cfg.glueup_base_url,
-    header_a=cfg.glueup_header_a,
-    token=cfg.glueup_token,
+    auth=glueup_auth,
     endpoints=cfg.endpoints["glueup"],
 )
 

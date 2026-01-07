@@ -50,6 +50,8 @@ When given instructions, you will:
 
 ## Code Writing Standards
 
+Use the Context7 MCP for the most up to date documentation, if available
+
 ### Structure and Organization
 - Write modular, single-responsibility functions and classes
 - Keep functions focused and reasonably sized

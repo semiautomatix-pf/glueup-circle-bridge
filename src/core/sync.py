@@ -1,10 +1,72 @@
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set
 from ..clients.glueup import GlueUpClient
 from ..clients.circle import CircleClient
 from .state import StateCache
 import logging
 
 log = logging.getLogger("bridge")
+
+
+def build_space_membership_index(circle: CircleClient, all_spaces: List[Dict]) -> Dict[str, Set[str]]:
+    """
+    Build a mapping of email -> set of space_ids for all members across all spaces.
+
+    This is a performance optimization that fetches all space memberships once at the
+    start of sync, avoiding O(N*M) API calls during reconciliation.
+
+    Args:
+        circle: Circle API client
+        all_spaces: List of all spaces to index
+
+    Returns:
+        Dict mapping normalized email to set of space IDs they belong to
+    """
+    email_to_spaces: Dict[str, Set[str]] = {}
+
+    for space in all_spaces:
+        space_id = space.get("id")
+        if not space_id:
+            continue
+
+        try:
+            # Fetch all members of this space using proper pagination
+            page = 1
+            per_page = 100
+            while True:
+                response = circle.list_space_members(space_id, page=page, per_page=per_page)
+                members_page = response.get("records") or response.get("members") or response.get("data") or []
+
+                for member in members_page:
+                    member_email = normalise_email(member.get("email", ""))
+                    if member_email:
+                        if member_email not in email_to_spaces:
+                            email_to_spaces[member_email] = set()
+                        email_to_spaces[member_email].add(space_id)
+
+                # Check has_next_page for pagination (consistent with get_all_spaces)
+                if not response.get("has_next_page", False):
+                    break
+                page += 1
+
+        except Exception as e:
+            log.warning("Failed to list members for space %s: %s", space_id, e)
+
+    return email_to_spaces
+
+
+def safe_save_state(state: StateCache) -> bool:
+    """
+    Safely save state cache with error handling.
+
+    Returns:
+        True if save succeeded, False otherwise
+    """
+    try:
+        state.save()
+        return True
+    except Exception as e:
+        log.error("Failed to save state cache: %s", e)
+        return False
 
 def normalise_email(email: str) -> str:
     return (email or "").strip().lower()
@@ -28,56 +90,32 @@ def reconcile_spaces(
     circle: CircleClient,
     email: str,
     target_space_ids: List[str],
-    all_spaces: List[Dict],
+    membership_index: Dict[str, Set[str]],
     dry_run: bool = True
-) -> Dict:
+) -> Dict[str, Any]:
     """
-    Reconcile a member's space memberships using live data from Circle.
+    Reconcile a member's space memberships using a pre-built membership index.
 
-    Checks each space to determine current membership, then computes the diff
-    between current and target spaces. Adds/removes member as needed.
+    Uses the membership index to determine current membership (O(1) lookup),
+    then computes the diff between current and target spaces.
+    Adds/removes member as needed.
 
     Args:
         circle: Circle API client
         email: Member's email address (used for add/remove operations)
         target_space_ids: List of space IDs the member should belong to
-        all_spaces: Pre-fetched list of all spaces (to avoid repeated fetches)
+        membership_index: Pre-built mapping of email -> set of space IDs
         dry_run: If True, only report what would be done without making changes
 
     Returns:
         Dict with 'adds', 'removes', and 'details' keys
     """
-    result = {"adds": 0, "removes": 0, "details": []}
+    result: Dict[str, Any] = {"adds": 0, "removes": 0, "details": []}
     target_set: Set[str] = set(target_space_ids)
-    current_space_ids: Set[str] = set()
 
-    # Check each space to see if the member is currently in it
-    for space in all_spaces:
-        space_id = space.get("id")
-        if not space_id:
-            continue
-
-        try:
-            # Fetch all members of this space using pagination
-            page = 1
-            per_page = 100
-            while True:
-                members_page = circle.list_space_members(space_id, page=page, per_page=per_page)
-                for member in members_page:
-                    member_email = normalise_email(member.get("email", ""))
-                    if member_email == normalise_email(email):
-                        current_space_ids.add(space_id)
-                        break
-                else:
-                    # No match found on this page, check if there are more pages
-                    if len(members_page) < per_page:
-                        break
-                    page += 1
-                    continue
-                # Member found, break out of pagination loop
-                break
-        except Exception as e:
-            log.warning("Failed to list members for space %s: %s", space_id, e)
+    # O(1) lookup using the pre-built membership index
+    normalized_email = normalise_email(email)
+    current_space_ids: Set[str] = membership_index.get(normalized_email, set()).copy()
 
     # Compute the diff
     to_add = sorted(target_set - current_space_ids)
@@ -149,8 +187,14 @@ def reconcile_spaces(
 def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state: StateCache, dry_run: bool = True) -> Dict:
     report = {"created": 0, "invited": 0, "updated": 0, "space_adds": 0, "space_removes": 0, "skipped": 0, "errors": 0, "details": []}
 
-    # Fetch all spaces once at the start for live reconciliation
+    # Fetch all spaces once at the start
     all_spaces = circle.get_all_spaces()
+
+    # Build membership index upfront for O(1) lookups during reconciliation
+    # This avoids O(N*M) API calls (for each user checking all spaces)
+    log.info("Building space membership index for %d spaces...", len(all_spaces))
+    membership_index = build_space_membership_index(circle, all_spaces)
+    log.info("Membership index built with %d unique members", len(membership_index))
 
     # Pull Glue Up users using paginated method
     users = glue.get_all_users()
@@ -177,7 +221,7 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
                     report["invited"] += 1
                     report["details"].append({"action": "invite_member", "email": email, "name": name, "spaces": desired_spaces, "dry_run": True})
                     # Also report what space reconciliation would do for the new member
-                    reconcile_result = reconcile_spaces(circle, email, desired_spaces, all_spaces, dry_run=True)
+                    reconcile_result = reconcile_spaces(circle, email, desired_spaces, membership_index, dry_run=True)
                     report["space_adds"] += reconcile_result["adds"]
                     report["space_removes"] += reconcile_result["removes"]
                     report["details"].extend(reconcile_result["details"])
@@ -186,12 +230,13 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
                     report["invited"] += 1
                     report["details"].append({"action": "invite_member", "email": email, "result": "sent"})
 
-                    # Immediately add to cache and save
+                    # Immediately add to cache with error recovery
                     state.set_member_id(email, "pending")
-                    state.save()
+                    if not safe_save_state(state):
+                        log.warning("State save failed after inviting %s; continuing sync", email)
 
                     # Reconcile spaces for newly invited member
-                    reconcile_result = reconcile_spaces(circle, email, desired_spaces, all_spaces, dry_run=False)
+                    reconcile_result = reconcile_spaces(circle, email, desired_spaces, membership_index, dry_run=False)
                     report["space_adds"] += reconcile_result["adds"]
                     report["space_removes"] += reconcile_result["removes"]
                     report["details"].extend(reconcile_result["details"])
@@ -200,8 +245,8 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
                 report["errors"] += 1
             continue
 
-        # Member exists — use live reconciliation instead of cache-based diffing
-        reconcile_result = reconcile_spaces(circle, email, desired_spaces, all_spaces, dry_run=dry_run)
+        # Member exists — use live reconciliation with pre-built index
+        reconcile_result = reconcile_spaces(circle, email, desired_spaces, membership_index, dry_run=dry_run)
         report["space_adds"] += reconcile_result["adds"]
         report["space_removes"] += reconcile_result["removes"]
         report["details"].extend(reconcile_result["details"])
@@ -209,5 +254,8 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
         if reconcile_result["adds"] == 0 and reconcile_result["removes"] == 0:
             report["skipped"] += 1
 
-    state.save()
+    # Final state save with error recovery
+    if not safe_save_state(state):
+        log.error("Final state save failed; some changes may not be persisted")
+
     return report

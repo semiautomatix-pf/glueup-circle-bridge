@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from .http import HttpClient
 
 class CircleClient:
@@ -38,11 +38,11 @@ class CircleClient:
         params = {"email": email, "space_id": space_id}
         return self.http.request("DELETE", self.endpoints["remove_member_from_space"], params=params)
 
-    def list_spaces(self, page: int = 1, per_page: int = 100) -> Dict:
+    def list_spaces(self, page: int = 1, per_page: int = 100) -> Dict[str, Any]:
         params = {"page": page, "per_page": per_page}
         return self.http.request("GET", self.endpoints.get("list_spaces", "/spaces"), params=params)
 
-    def list_space_members(self, space_id: str, page: int = 1, per_page: int = 100) -> Dict:
+    def list_space_members(self, space_id: str, page: int = 1, per_page: int = 100) -> Dict[str, Any]:
         params = {"space_id": space_id, "page": page, "per_page": per_page}
         return self.http.request("GET", self.endpoints["list_space_members"], params=params)
 
