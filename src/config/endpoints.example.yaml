@@ -1,0 +1,11 @@
+glueup:
+  users_list: "/api/v2/users"
+  memberships_list: "/api/v2/memberships"
+  events_list: "/api/v2/events"
+circle:
+  list_members: "/community_members"
+  invite_member: "/community_members/invite"
+  update_member: "/community_members/{member_id}"
+  add_member_to_space: "/spaces/{space_id}/members"
+  remove_member_from_space: "/spaces/{space_id}/members/{member_id}"
+  list_spaces: "/spaces"
