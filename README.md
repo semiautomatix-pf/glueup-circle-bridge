@@ -21,7 +21,7 @@ A lightweight service that keeps your Glue Up (AMS) members in sync with your Ci
 - A Circle community API token (Admin API v2).
 
 ### 2) Grab API details
-- **Glue Up**: confirm base URL and authentication method (API key header or Bearer token). Your account manager can enable API access if not already enabled.
+- **Glue Up**: obtain your API credentials (public key, private key, email, and password). Your account manager can enable API access if not already enabled. The bridge uses HMAC-SHA256 signature authentication with automatic session token management.
 - **Circle**: in your community go to **Developers → Tokens** and create an Admin API token. Keep it secret.
 
 ### 3) Configure
@@ -69,11 +69,15 @@ Flip `dry_run` to `false` when you’re happy with the proposed changes.
 | Variable | Description |
 |---|---|
 | `GLUEUP_BASE_URL` | Glue Up API base URL, e.g. `https://api.glueup.com` or your tenant base |
-| `GLUEUP_AUTH_HEADER` | Header name for auth, e.g. `Authorization` or `X-API-Key` |
-| `GLUEUP_AUTH_VALUE` | Full value to send, e.g. `Bearer <token>` or the API key |
-| `CIRCLE_BASE_URL` | Circle Admin API base, defaults to `https://app.circle.so/api/headless/admin/v1` |
+| `GLUEUP_PUBLIC_KEY` | Your Glue Up API public key |
+| `GLUEUP_PRIVATE_KEY` | Your Glue Up API private key |
+| `GLUEUP_EMAIL` | Your Glue Up account email |
+| `GLUEUP_PASSPHRASE` | Your Glue Up account password (plaintext - the code will MD5 hash it) |
+| `CIRCLE_BASE_URL` | Circle Admin API base, defaults to `https://app.circle.so/api/admin/v2` |
 | `CIRCLE_API_TOKEN` | Your Circle Admin API token |
 | `SERVER_PORT` | Optional; default `8080` |
+
+> **Note**: Glue Up authentication is handled automatically by the bridge. It generates HMAC-SHA256 signatures for each request and manages session tokens internally, refreshing them as needed.
 
 ### `src/config/endpoints.yaml`
 
@@ -83,17 +87,16 @@ You can overwrite any of these paths to match your tenant/version.
 glueup:
   users_list: "/api/v2/users"
   memberships_list: "/api/v2/memberships"
-  # optional if you want event mirroring later
   events_list: "/api/v2/events"
 
 circle:
-  # v2 Admin API typically mounted under /api/headless/admin/v1
   list_members: "/community_members"
-  invite_member: "/community_members/invite"
+  invite_member: "/community_members"
   update_member: "/community_members/{member_id}"
-  add_member_to_space: "/spaces/{space_id}/members"
-  remove_member_from_space: "/spaces/{space_id}/members/{member_id}"
+  add_member_to_space: "/space_members"
+  remove_member_from_space: "/space_members"
   list_spaces: "/spaces"
+  list_space_members: "/space_members"
 ```
 
 > Exact names can vary across API versions. Open the Circle Admin API page and copy the operation paths. Same for Glue Up via the Apiary doc. This app simply stitches whatever you put here.
@@ -116,6 +119,14 @@ tags:
 ---
 
 ## Deploy
+
+### Production (gunicorn)
+
+For production deployments, use gunicorn:
+
+```bash
+gunicorn -c gunicorn.conf.py src.web.server:application
+```
 
 ### Docker
 
@@ -147,7 +158,7 @@ Add a crontab entry (every 6 hours):
 
 - Extend `GlueUpClient` to pull the exact fields you want (custom fields, company name, expiry date).
 - In `CircleClient`, wire up tags and groups if you use them heavily.
-- Add HMAC verification for Glue Up webhooks (if Glue Up exposes it on your tenant).
+- Add webhook signature verification for incoming Glue Up webhook payloads.
 - Mirror events from Glue Up into Circle (create/update/delete).
 
 ---
