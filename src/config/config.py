@@ -18,6 +18,7 @@ class BridgeConfig:
     glueup_private_key: str
     glueup_email: str
     glueup_passphrase: str
+    glueup_organization_id: str
     circle_base_url: str
     circle_api_token: str
     endpoints: Dict[str, Dict[str, str]]
@@ -42,6 +43,7 @@ def load_config() -> BridgeConfig:
         "GLUEUP_PRIVATE_KEY": os.getenv("GLUEUP_PRIVATE_KEY", "").strip(),
         "GLUEUP_EMAIL": os.getenv("GLUEUP_EMAIL", "").strip(),
         "GLUEUP_PASSPHRASE": os.getenv("GLUEUP_PASSPHRASE", "").strip(),
+        "GLUEUP_ORGANIZATION_ID": os.getenv("GLUEUP_ORGANIZATION_ID", "").strip(),
         "CIRCLE_API_TOKEN": os.getenv("CIRCLE_API_TOKEN", "").strip(),
     }
 
@@ -72,6 +74,7 @@ def load_config() -> BridgeConfig:
         glueup_private_key=required_env["GLUEUP_PRIVATE_KEY"],
         glueup_email=required_env["GLUEUP_EMAIL"],
         glueup_passphrase=required_env["GLUEUP_PASSPHRASE"],
+        glueup_organization_id=required_env["GLUEUP_ORGANIZATION_ID"],
         circle_base_url=circle_base_url,
         circle_api_token=required_env["CIRCLE_API_TOKEN"],
         endpoints=endpoints,

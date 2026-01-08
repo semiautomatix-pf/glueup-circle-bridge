@@ -184,7 +184,7 @@ def reconcile_spaces(
     return result
 
 
-def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state: StateCache, dry_run: bool = True) -> Dict:
+def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state: StateCache, organization_id: str, dry_run: bool = True) -> Dict:
     report = {"created": 0, "invited": 0, "updated": 0, "space_adds": 0, "space_removes": 0, "skipped": 0, "errors": 0, "details": []}
 
     # Fetch all spaces once at the start
@@ -196,20 +196,33 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
     membership_index = build_space_membership_index(circle, all_spaces)
     log.info("Membership index built with %d unique members", len(membership_index))
 
-    # Pull Glue Up users using paginated method
-    users = glue.get_all_users()
+    # Pull Glue Up members from membership directory (includes membership + member details)
+    log.info("Fetching members from Glue Up membership directory...")
+    members = glue.get_all_members(organization_id)
+    log.info("Fetched %d members from Glue Up", len(members))
 
-    # Fetch memberships per user (you might batch this in production)
-    for u in users:
-        email = normalise_email(u.get("email") or u.get("email_address") or "")
-        name = u.get("name") or f"{u.get('first_name','').strip()} {u.get('last_name','').strip()}".strip()
+    # Process each member record
+    # Structure: {"membership": {..., "membershipType": {...}}, "individualMember": {...}}
+    for record in members:
+        membership = record.get("membership", {})
+        individual = record.get("individualMember", {})
+
+        # Extract email from nested structure
+        email_obj = individual.get("emailAddress", {})
+        email = normalise_email(email_obj.get("value", "") if isinstance(email_obj, dict) else str(email_obj))
+
+        # Extract name
+        given_name = individual.get("givenName", "")
+        family_name = individual.get("familyName", "")
+        name = f"{given_name} {family_name}".strip()
+
         if not email:
             report["skipped"] += 1
             continue
-        memberships = glue.list_memberships(user_id=u.get("id"))
-        # pick the "primary" membership (first active)
-        primary = next((m for m in memberships if derive_status(m) == "active"), (memberships[0] if memberships else {}))
-        plan_slug = (primary.get("plan_slug") or primary.get("plan_name") or "unmapped").strip().lower()
+
+        # Get membership type title as plan slug
+        membership_type = membership.get("membershipType", {})
+        plan_slug = (membership_type.get("title") or membership_type.get("internalTitle") or "unmapped").strip().lower()
         desired_spaces = decide_spaces(plan_slug, mapping)
 
         # resolve Circle member by cache first then maybe lookup (not implemented: full listing for scale)
@@ -219,7 +232,7 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
             try:
                 if dry_run:
                     report["invited"] += 1
-                    report["details"].append({"action": "invite_member", "email": email, "name": name, "spaces": desired_spaces, "dry_run": True})
+                    report["details"].append({"action": "invite_member", "email": email, "name": name, "membership_type": plan_slug, "spaces": desired_spaces, "dry_run": True})
                     # Also report what space reconciliation would do for the new member
                     reconcile_result = reconcile_spaces(circle, email, desired_spaces, membership_index, dry_run=True)
                     report["space_adds"] += reconcile_result["adds"]

@@ -75,6 +75,7 @@ class GlueUpClient:
         path: str,
         params: Optional[Dict[str, Any]] = None,
         json_body: Optional[Any] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Make an authenticated request to the GlueUp API.
 
@@ -86,6 +87,7 @@ class GlueUpClient:
             path: The API path.
             params: Optional query parameters.
             json_body: Optional JSON body for the request.
+            extra_headers: Optional additional headers (e.g., requestOrganizationId).
 
         Returns:
             The JSON response as a dictionary.
@@ -96,6 +98,8 @@ class GlueUpClient:
         """
         url = self._build_url(path)
         headers = self.auth.get_headers(method)
+        if extra_headers:
+            headers.update(extra_headers)
 
         logger.debug("Making %s request to %s", method, url)
 
@@ -130,23 +134,34 @@ class GlueUpClient:
             logger.warning("Response is not valid JSON, returning raw text")
             return {"raw": response.text}
 
-    def list_users(self, updated_since: Optional[str] = None) -> List[Dict]:
-        """List users from the GlueUp API.
+    def list_members(self, organization_id: str, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """List members from the membership directory.
+
+        Uses POST /membershipDirectory/members endpoint.
 
         Args:
-            updated_since: Optional ISO timestamp to filter users updated after this time.
+            organization_id: The organization ID for the requestOrganizationId header.
+            limit: Maximum number of records to return (default 100).
+            offset: Number of records to skip (default 0).
 
         Returns:
-            A list of user dictionaries.
+            A list of member dictionaries with membership and individualMember data.
         """
-        params = {}
-        if updated_since:
-            params["updated_since"] = updated_since
+        json_body = {
+            "projection": [],
+            "filter": [],
+            "order": {"familyName": "asc"},
+            "offset": offset,
+            "limit": limit,
+        }
 
-        data = self._request("GET", self.endpoints["users_list"], params=params)
-        # Normalize: expect data may be in {records:[...]} or {data:[...]}
-        items = data.get("records") or data.get("data") or data.get("users") or []
-        return items
+        data = self._request(
+            "POST",
+            self.endpoints["members_directory"],
+            json_body=json_body,
+            extra_headers={"requestOrganizationId": organization_id},
+        )
+        return data.get("value") or []
 
     def list_memberships(self, user_id: Optional[str] = None) -> List[Dict]:
         """List memberships from the GlueUp API.
@@ -174,26 +189,30 @@ class GlueUpClient:
         data = self._request("GET", self.endpoints.get("events_list", "/events"))
         return data.get("records") or data.get("data") or data.get("events") or []
 
-    def get_all_users(self) -> List[Dict]:
-        """Paginate through all users and return the complete list.
+    def get_all_members(self, organization_id: str) -> List[Dict]:
+        """Paginate through all members and return the complete list.
+
+        Uses POST /membershipDirectory/members with offset pagination.
+
+        Args:
+            organization_id: The organization ID for the requestOrganizationId header.
 
         Returns:
-            A list of all user dictionaries.
+            A list of all member dictionaries.
         """
-        all_users = []
-        page = 1
+        all_members = []
+        offset = 0
+        limit = 100
 
         while True:
-            params = {"page": page, "per_page": 100}
-            data = self._request("GET", self.endpoints["users_list"], params=params)
-            users = data.get("records") or data.get("data") or data.get("users") or []
-            all_users.extend(users)
+            members = self.list_members(organization_id, limit=limit, offset=offset)
+            all_members.extend(members)
 
-            if len(users) < 100 or "next_page" not in data:
+            if len(members) < limit:
                 break
-            page += 1
+            offset += limit
 
-        return all_users
+        return all_members
 
     def get_all_memberships(self) -> List[Dict]:
         """Paginate through all memberships and return the complete list.

@@ -28,20 +28,24 @@ class GlueUpAuthError(Exception):
 class GlueUpAuth:
     """Handles GlueUp API authentication and header generation.
 
-    The GlueUp API requires two headers for authenticated requests:
-    - 'a': A dynamically generated HMAC-SHA256 signature header
-    - 'token': A session token obtained from the /v2/user/session endpoint
+    All GlueUp API requests require two authentication headers:
+    - 'a': A dynamically generated HMAC-SHA256 signature header (fresh per request)
+    - 'token': The session token obtained from the session endpoint
+
+    Session request (/v2/user/session):
+    - Uses only 'a' header (no token yet)
+    - Body: email and passphrase (passphrase should be pre-hashed MD5)
 
     Attributes:
         base_url: The base URL for the GlueUp API.
         public_key: The public API key for signing requests.
         private_key: The private API key used as HMAC secret.
         email: The user email for session authentication.
-        passphrase: The user passphrase for session authentication.
+        passphrase: The user passphrase (should be MD5-hashed in config).
         version: The API version string (default "1.0").
     """
 
-    SESSION_ENDPOINT = "/v2/user/session"
+    SESSION_ENDPOINT = "/user/session"
     DEFAULT_TIMEOUT = 30
     TOKEN_EXPIRY_BUFFER_MS = 60 * 1000  # Refresh 60 seconds before expiry
 
@@ -150,8 +154,11 @@ class GlueUpAuth:
     def _authenticate(self) -> str:
         """Authenticate with GlueUp to obtain a new session token.
 
-        Calls the /v2/user/session endpoint with email and MD5-hashed passphrase
-        to obtain a new session token.
+        Calls the /v2/user/session endpoint with email and passphrase
+        to obtain a new session token. The 'a' header (HMAC-SHA256) is
+        required for this session request.
+
+        Note: The passphrase should already be MD5-hashed in the config/env.
 
         Returns:
             The new session token string.
@@ -167,12 +174,10 @@ class GlueUpAuth:
             "Content-Type": "application/json",
         }
 
-        # Hash the passphrase with MD5 as required by GlueUp API
-        passphrase_hash = hashlib.md5(self.passphrase.encode("utf-8")).hexdigest()
-
+        # Passphrase is expected to already be MD5-hashed in the configuration
         payload = {
             "email": {"value": self.email},
-            "passphrase": {"value": passphrase_hash},
+            "passphrase": {"value": self.passphrase},
         }
 
         logger.debug("Authenticating with GlueUp at %s", url)
@@ -221,16 +226,19 @@ class GlueUpAuth:
         return self._token
 
     def get_headers(self, method: str) -> Dict[str, str]:
-        """Get all headers required for a GlueUp API request.
+        """Get headers required for a GlueUp API request.
 
-        Generates the dynamic 'a' header and includes the session token.
+        All GlueUp API requests require both:
+        - 'a': HMAC-SHA256 signature header (generated fresh per request)
+        - 'token': Session token obtained from authentication
 
         Args:
             method: The HTTP method (GET, POST, etc.) for the request.
+                    Used to generate the HMAC signature.
 
         Returns:
-            A dictionary containing all required headers:
-            - 'a': The dynamically generated signature header
+            A dictionary containing the required headers:
+            - 'a': The HMAC-SHA256 signature header
             - 'token': The session token
             - 'Content-Type': application/json
 

@@ -1,7 +1,7 @@
 plans_to_spaces:
   basic: ["REPLACE_WITH_SPACE_ID"]
   premium: ["REPLACE_WITH_SPACE_ID"]
-default_spaces: []
+default_spaces: ["2411092"] # Announcements - everyone gets this
 tags:
   active: ["Active"]
   lapsed: ["Lapsed"]

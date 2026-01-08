@@ -68,11 +68,12 @@ Flip `dry_run` to `false` when you’re happy with the proposed changes.
 
 | Variable | Description |
 |---|---|
-| `GLUEUP_BASE_URL` | Glue Up API base URL, e.g. `https://api.glueup.com` or your tenant base |
+| `GLUEUP_BASE_URL` | Glue Up API base URL including version, e.g. `https://api.glueup.com/v2` |
 | `GLUEUP_PUBLIC_KEY` | Your Glue Up API public key |
 | `GLUEUP_PRIVATE_KEY` | Your Glue Up API private key |
 | `GLUEUP_EMAIL` | Your Glue Up account email |
 | `GLUEUP_PASSPHRASE` | Your Glue Up account password (plaintext - the code will MD5 hash it) |
+| `GLUEUP_ORGANIZATION_ID` | Your Glue Up organization ID (find in dashboard URL or API responses) |
 | `CIRCLE_BASE_URL` | Circle Admin API base, defaults to `https://app.circle.so/api/admin/v2` |
 | `CIRCLE_API_TOKEN` | Your Circle Admin API token |
 | `SERVER_PORT` | Optional; default `8080` |
@@ -85,9 +86,14 @@ You can overwrite any of these paths to match your tenant/version.
 
 ```yaml
 glueup:
-  users_list: "/api/v2/users"
-  memberships_list: "/api/v2/memberships"
-  events_list: "/api/v2/events"
+  # POST - Returns active membership members
+  members_directory: "/membershipDirectory/members"
+  # POST - Returns membership types
+  membership_types: "/public/membership/publishedMembershipTypeList"
+  # GET - Returns memberships for authenticated user
+  memberships_list: "/membership/activeApplicationList"
+  # POST - Returns events list
+  events_list: "/event/list"
 
 circle:
   list_members: "/community_members"

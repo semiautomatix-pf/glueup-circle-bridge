@@ -1,7 +1,13 @@
 glueup:
-  users_list: "/api/v2/users"
-  memberships_list: "/api/v2/memberships"
-  events_list: "/api/v2/events"
+  # POST - Returns active membership members with email, name, membership type
+  # Requires requestOrganizationId header
+  members_directory: "/membershipDirectory/members"
+  # POST - Returns membership types
+  membership_types: "/public/membership/publishedMembershipTypeList"
+  # GET - Returns memberships for authenticated user
+  memberships_list: "/membership/activeApplicationList"
+  # POST - Returns events list
+  events_list: "/event/list"
 circle:
   list_members: "/community_members"
   invite_member: "/community_members"
