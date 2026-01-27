@@ -1,7 +1,32 @@
 plans_to_spaces:
   basic: ["REPLACE_WITH_SPACE_ID"]
   premium: ["REPLACE_WITH_SPACE_ID"]
+  # Corporate membership plans (check GlueUp for exact plan names - case sensitive)
+  "corporate gold": ["REPLACE_WITH_CORPORATE_SPACE_ID"]
+  "corporate silver": ["REPLACE_WITH_CORPORATE_SPACE_ID"]
+  "corporate platinum": ["REPLACE_WITH_CORPORATE_SPACE_ID"]
 default_spaces: ["2411092"] # Announcements - everyone gets this
 tags:
   active: ["Active"]
   lapsed: ["Lapsed"]
+
+# Event sync configuration
+events:
+  # Circle space ID where all events will be created
+  default_space_id: "2411092"
+
+  sync_settings:
+    create_new: true          # Create new events in Circle when found in GlueUp
+    update_existing: true     # Update Circle events when GlueUp event changes
+    delete_removed: false     # Delete Circle events removed from GlueUp (recommended: false)
+    published_only: true      # Only sync published events from GlueUp
+    future_only: true         # Only sync future/upcoming events (past events ignored)
+    sync_attendees: false     # Sync event attendees/RSVPs (not yet implemented)
+
+  # Field overrides/defaults for all events
+  field_overrides:
+    host: "GlueUp Events"           # Default host name for all events
+    # location_type: "tbd"          # Uncomment to force a location type (auto-detected by default)
+    rsvp_disabled: false            # Whether to disable RSVPs in Circle
+    send_email_confirmation: true   # Send confirmation email on RSVP
+    send_email_reminder: true       # Send reminder email before event

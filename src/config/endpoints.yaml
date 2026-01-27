@@ -2,6 +2,9 @@ glueup:
   # POST - Returns active membership members with email, name, membership type
   # Requires requestOrganizationId header
   members_directory: "/membershipDirectory/members"
+  # POST - Returns corporate memberships with admin and member contacts
+  # Requires requestOrganizationId header
+  corporate_memberships_directory: "/membershipDirectory/corporateMemberships"
   # POST - Returns membership types
   membership_types: "/public/membership/publishedMembershipTypeList"
   # GET - Returns memberships for authenticated user
@@ -16,3 +19,9 @@ circle:
   remove_member_from_space: "/space_members"
   list_spaces: "/spaces"
   list_space_members: "/space_members"
+  # Event endpoints
+  list_events: "/events"
+  create_event: "/events"
+  update_event: "/events/{id}"
+  delete_event: "/events/{id}"
+  get_event: "/events/{id}"

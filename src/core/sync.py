@@ -86,6 +86,155 @@ def derive_status(membership: Dict) -> str:
     return status or "unknown"
 
 
+def normalize_individual_member(record: Dict) -> Dict[str, Any]:
+    """Normalize an individual member record from GlueUp to standard format.
+
+    Args:
+        record: Individual member record with 'membership' and 'individualMember' keys
+
+    Returns:
+        Normalized member dict with email, name, plan_slug, member_type, corporate_name
+    """
+    membership = record.get("membership", {})
+    individual = record.get("individualMember", {})
+
+    # Extract email from nested structure
+    email_obj = individual.get("emailAddress", {})
+    email = email_obj.get("value", "") if isinstance(email_obj, dict) else str(email_obj)
+
+    # Extract name
+    given_name = individual.get("givenName", "")
+    family_name = individual.get("familyName", "")
+    name = f"{given_name} {family_name}".strip()
+
+    # Get membership type title as plan slug
+    membership_type = membership.get("membershipType", {})
+    plan_slug = (
+        membership_type.get("title") or membership_type.get("internalTitle") or "unmapped"
+    ).strip().lower()
+
+    return {
+        "email": normalise_email(email),
+        "name": name,
+        "plan_slug": plan_slug,
+        "member_type": "individual",
+        "corporate_name": None,
+    }
+
+
+def normalize_corporate_contacts(corp_record: Dict) -> List[Dict[str, Any]]:
+    """Normalize a corporate membership record to list of contact members.
+
+    Yields both admin contact and all member contacts.
+
+    Args:
+        corp_record: Corporate membership record with 'membership', 'adminContact', 'memberContacts'
+
+    Returns:
+        List of normalized member dicts (admin + member contacts)
+    """
+    membership = corp_record.get("membership", {})
+    admin_contact = corp_record.get("adminContact", {})
+    member_contacts = corp_record.get("memberContacts", []) or []
+
+    # Get membership type for plan slug
+    membership_type = membership.get("membershipType", {})
+    plan_slug = (
+        membership_type.get("title") or membership_type.get("internalTitle") or "unmapped"
+    ).strip().lower()
+
+    # Get corporate name
+    corporate_name = membership.get("name", "Unknown Corporation")
+
+    contacts = []
+
+    # Process admin contact
+    if admin_contact:
+        admin_email_obj = admin_contact.get("emailAddress", {})
+        admin_email = (
+            admin_email_obj.get("value", "")
+            if isinstance(admin_email_obj, dict)
+            else str(admin_email_obj)
+        )
+        admin_given = admin_contact.get("givenName", "")
+        admin_family = admin_contact.get("familyName", "")
+        admin_name = f"{admin_given} {admin_family}".strip()
+
+        if admin_email:
+            contacts.append({
+                "email": normalise_email(admin_email),
+                "name": admin_name,
+                "plan_slug": plan_slug,
+                "member_type": "corporate_admin",
+                "corporate_name": corporate_name,
+            })
+
+    # Process member contacts
+    for contact in member_contacts:
+        contact_email_obj = contact.get("emailAddress", {})
+        contact_email = (
+            contact_email_obj.get("value", "")
+            if isinstance(contact_email_obj, dict)
+            else str(contact_email_obj)
+        )
+        contact_given = contact.get("givenName", "")
+        contact_family = contact.get("familyName", "")
+        contact_name = f"{contact_given} {contact_family}".strip()
+
+        if contact_email:
+            contacts.append({
+                "email": normalise_email(contact_email),
+                "name": contact_name,
+                "plan_slug": plan_slug,
+                "member_type": "corporate_contact",
+                "corporate_name": corporate_name,
+            })
+
+    return contacts
+
+
+def get_all_normalized_members(glue: GlueUpClient, organization_id: str) -> List[Dict[str, Any]]:
+    """Fetch and normalize all members (individual + corporate contacts).
+
+    Args:
+        glue: GlueUp API client
+        organization_id: Organization ID for API requests
+
+    Returns:
+        List of normalized member dicts with unified structure
+    """
+    all_members = []
+
+    # Fetch both types
+    unified = glue.get_all_members_unified(organization_id)
+
+    # Normalize individual members
+    for record in unified["individual"]:
+        try:
+            normalized = normalize_individual_member(record)
+            if normalized["email"]:  # Only include if email exists
+                all_members.append(normalized)
+        except Exception as e:
+            log.warning("Failed to normalize individual member: %s", e)
+
+    # Normalize corporate contacts
+    for corp_record in unified["corporate"]:
+        try:
+            contacts = normalize_corporate_contacts(corp_record)
+            all_members.extend(contacts)
+        except Exception as e:
+            log.warning("Failed to normalize corporate membership: %s", e)
+
+    log.info(
+        "Normalized %d total members (%d individual, %d corporate)",
+        len(all_members),
+        len(unified["individual"]),
+        sum(len(normalize_corporate_contacts(c)) for c in unified["corporate"]),
+    )
+
+    return all_members
+
+
 def reconcile_spaces(
     circle: CircleClient,
     email: str,
@@ -184,8 +333,96 @@ def reconcile_spaces(
     return result
 
 
+def validate_cache_against_circle(circle: CircleClient, state: StateCache, repair: bool = False) -> Dict:
+    """Validate state cache against Circle API and optionally repair discrepancies.
+
+    Args:
+        circle: Circle API client
+        state: State cache to validate
+        repair: If True, fix discrepancies by updating cache
+
+    Returns:
+        Dict with validation report: valid, invalid, missing, repaired counts
+    """
+    report = {
+        "valid": 0,
+        "invalid": 0,
+        "missing_in_circle": 0,
+        "missing_in_cache": 0,
+        "repaired": 0,
+        "details": [],
+    }
+
+    log.info("Validating cache against Circle API (repair=%s)...", repair)
+
+    # Fetch all Circle members
+    try:
+        all_circle_members = circle.get_all_members()
+        circle_emails = {normalise_email(m.get("email", "")): m.get("id") for m in all_circle_members if m.get("email")}
+        log.info("Fetched %d members from Circle", len(circle_emails))
+    except Exception as e:
+        log.error("Failed to fetch Circle members: %s", e)
+        return {"error": str(e)}
+
+    # Check cache entries against Circle
+    cache_data = state._data.get("email_to_member_id", {})
+    for email, cached_id in cache_data.items():
+        normalized = normalise_email(email)
+        if normalized in circle_emails:
+            report["valid"] += 1
+        else:
+            report["missing_in_circle"] += 1
+            report["details"].append({
+                "issue": "missing_in_circle",
+                "email": email,
+                "cached_id": cached_id,
+            })
+
+    # Check Circle members not in cache
+    for email, circle_id in circle_emails.items():
+        if email not in cache_data:
+            report["missing_in_cache"] += 1
+            report["details"].append({
+                "issue": "missing_in_cache",
+                "email": email,
+                "circle_id": circle_id,
+            })
+            if repair:
+                state.set_member_id(email, circle_id)
+                report["repaired"] += 1
+
+    # Save repaired cache
+    if repair and report["repaired"] > 0:
+        if safe_save_state(state):
+            log.info("Cache repaired: %d entries added", report["repaired"])
+        else:
+            log.error("Failed to save repaired cache")
+
+    log.info("Validation complete: %d valid, %d invalid, %d missing in Circle, %d missing in cache, %d repaired",
+             report["valid"], report["invalid"], report["missing_in_circle"], report["missing_in_cache"], report["repaired"])
+
+    return report
+
+
 def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state: StateCache, organization_id: str, dry_run: bool = True) -> Dict:
-    report = {"created": 0, "invited": 0, "updated": 0, "space_adds": 0, "space_removes": 0, "skipped": 0, "errors": 0, "details": []}
+    report = {
+        "created": 0,
+        "invited": 0,
+        "updated": 0,
+        "space_adds": 0,
+        "space_removes": 0,
+        "skipped": 0,
+        "errors": 0,
+        "duplicates_skipped": 0,
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "member_types": {
+            "individual": 0,
+            "corporate_admin": 0,
+            "corporate_contact": 0,
+        },
+        "details": [],
+    }
 
     # Fetch all spaces once at the start
     all_spaces = circle.get_all_spaces()
@@ -196,43 +433,74 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
     membership_index = build_space_membership_index(circle, all_spaces)
     log.info("Membership index built with %d unique members", len(membership_index))
 
-    # Pull Glue Up members from membership directory (includes membership + member details)
-    log.info("Fetching members from Glue Up membership directory...")
-    members = glue.get_all_members(organization_id)
-    log.info("Fetched %d members from Glue Up", len(members))
+    # Fetch and normalize all members (individual + corporate contacts)
+    log.info("Fetching and normalizing members from Glue Up...")
+    members = get_all_normalized_members(glue, organization_id)
+    log.info("Fetched %d normalized members from Glue Up", len(members))
 
-    # Process each member record
-    # Structure: {"membership": {..., "membershipType": {...}}, "individualMember": {...}}
-    for record in members:
-        membership = record.get("membership", {})
-        individual = record.get("individualMember", {})
+    # In-batch deduplication: track emails we've seen in this sync
+    seen_in_batch = set()
 
-        # Extract email from nested structure
-        email_obj = individual.get("emailAddress", {})
-        email = normalise_email(email_obj.get("value", "") if isinstance(email_obj, dict) else str(email_obj))
+    # Process each normalized member
+    for member in members:
+        email = member["email"]
+        name = member["name"]
+        plan_slug = member["plan_slug"]
+        member_type = member["member_type"]
+        corporate_name = member.get("corporate_name")
 
-        # Extract name
-        given_name = individual.get("givenName", "")
-        family_name = individual.get("familyName", "")
-        name = f"{given_name} {family_name}".strip()
+        # Track member types
+        if member_type in report["member_types"]:
+            report["member_types"][member_type] += 1
+
+        # In-batch deduplication
+        if email in seen_in_batch:
+            report["duplicates_skipped"] += 1
+            log.debug("Skipping duplicate email in batch: %s", email)
+            continue
+        seen_in_batch.add(email)
 
         if not email:
             report["skipped"] += 1
             continue
 
-        # Get membership type title as plan slug
-        membership_type = membership.get("membershipType", {})
-        plan_slug = (membership_type.get("title") or membership_type.get("internalTitle") or "unmapped").strip().lower()
         desired_spaces = decide_spaces(plan_slug, mapping)
 
-        # resolve Circle member by cache first then maybe lookup (not implemented: full listing for scale)
+        # Resolve Circle member by cache first
         member_id = state.lookup_member_id(email)
+
+        # Cache hit tracking
+        if member_id:
+            report["cache_hits"] += 1
+        else:
+            report["cache_misses"] += 1
+
+            # Cross-check with membership_index (cache may be stale)
+            if normalise_email(email) in membership_index:
+                log.info("Found %s in Circle but not in cache - updating cache", email)
+                state.set_member_id(email, "known")
+                member_id = "known"
+                report["cache_hits"] += 1
+                report["cache_misses"] -= 1
+
         if not member_id:
-            # try optimistic invite (Circle handles duplicates)
+            # Try optimistic invite (Circle handles duplicates)
             try:
                 if dry_run:
                     report["invited"] += 1
-                    report["details"].append({"action": "invite_member", "email": email, "name": name, "membership_type": plan_slug, "spaces": desired_spaces, "dry_run": True})
+                    detail = {
+                        "action": "invite_member",
+                        "email": email,
+                        "name": name,
+                        "membership_type": plan_slug,
+                        "member_type": member_type,
+                        "spaces": desired_spaces,
+                        "dry_run": True,
+                    }
+                    if corporate_name:
+                        detail["corporate_name"] = corporate_name
+                    report["details"].append(detail)
+
                     # Also report what space reconciliation would do for the new member
                     reconcile_result = reconcile_spaces(circle, email, desired_spaces, membership_index, dry_run=True)
                     report["space_adds"] += reconcile_result["adds"]
@@ -241,7 +509,10 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
                 else:
                     circle.invite_member(email=email, name=name, spaces=desired_spaces)
                     report["invited"] += 1
-                    report["details"].append({"action": "invite_member", "email": email, "result": "sent"})
+                    detail = {"action": "invite_member", "email": email, "result": "sent", "member_type": member_type}
+                    if corporate_name:
+                        detail["corporate_name"] = corporate_name
+                    report["details"].append(detail)
 
                     # Immediately add to cache with error recovery
                     state.set_member_id(email, "pending")
@@ -270,5 +541,8 @@ def sync_members(glue: GlueUpClient, circle: CircleClient, mapping: Dict, state:
     # Final state save with error recovery
     if not safe_save_state(state):
         log.error("Final state save failed; some changes may not be persisted")
+
+    # Log member type summary
+    log.info("Member types processed: %s", report["member_types"])
 
     return report
