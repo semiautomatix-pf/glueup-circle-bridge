@@ -1,0 +1,5 @@
+# UI Dependencies for GlueUp Circle Bridge Streamlit Frontend
+
+streamlit>=1.28.0
+pyyaml>=6.0
+requests>=2.31.0

@@ -42,7 +42,12 @@ state = StateCache()
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    from datetime import datetime
+    return {
+        "status": "healthy",
+        "ok": True,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
 
 @app.get("/spaces")
 def list_spaces():

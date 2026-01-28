@@ -37,6 +37,8 @@ A lightweight service that keeps your Glue Up (AMS) members and events in sync w
 
 ## Quick start
 
+> **💡 New: Streamlit Web UI Available!** For a user-friendly web interface, see [Web UI Setup](#web-ui-optional) below.
+
 ### 1) Prerequisites
 - Python 3.10+
 - A Glue Up account with Open API v2 access enabled.
@@ -140,6 +142,36 @@ curl -X POST http://localhost:8080/admin/cache/validate -H "Content-Type: applic
 curl -X POST http://localhost:8080/admin/cache/validate -H "Content-Type: application/json" \
   -d '{"repair": true}'
 ```
+
+---
+
+## Web UI (Optional)
+
+For non-technical users, a Streamlit-based web interface is available that provides:
+- Visual configuration editor (no need to edit `.env` or YAML files manually)
+- Dashboard showing sync status and health
+- Point-and-click sync buttons with dry-run support
+- Real-time feedback and error messages
+
+### Quick Setup
+
+```bash
+# One-time setup
+./scripts/setup-ui.sh
+
+# Start both backend and UI
+./scripts/start.sh
+```
+
+Browser automatically opens at http://localhost:8501
+
+### Using the UI
+
+1. **Setup Tab:** Configure credentials and plan mappings
+2. **Dashboard Tab:** View sync status and system health
+3. **Sync Tab:** Trigger member/event syncs with dry-run support
+
+For detailed instructions, see [docs/RUNNING.md](docs/RUNNING.md).
 
 ---
 
